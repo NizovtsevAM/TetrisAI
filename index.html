@@ -562,7 +562,7 @@
       document.getElementById('pauseOverlay').classList.remove('visible');
       updateDisplay(); updatePreview();
       aiPlanCached = null; aiNextActionTime = 0; aiDescentPhase = false;
-      newPieceDelay = NEW_PIECE_SHOW_DELAY;
+      newPieceDelay = performance.now() + NEW_PIECE_SHOW_DELAY;
     }
 
     function togglePause() {
@@ -754,11 +754,11 @@
   <!-- =================== AI (BFS → "no new holes" + maximize lines, step-by-step) =================== -->
   <script>
     const AI_WEIGHTS = {
-      aggregate: -0.70,
+      aggregate: -0.80, // More penalty for general height
       lines: 0.80,
-      holes: -0.90,
-      bump: -0.30,
-      maxHeight: -1.00,
+      holes: -2.50, // Much more penalty for holes
+      bump: -0.50, // More penalty for bumpiness
+      maxHeight: -1.50, // More penalty for the max height
       survival: 1.60
     };
     const DANGER_HEIGHT = 10;
@@ -799,7 +799,8 @@
       let s = AI_WEIGHTS.aggregate * agg + AI_WEIGHTS.lines * ln + AI_WEIGHTS.holes * hol + AI_WEIGHTS.bump * bmp + AI_WEIGHTS.maxHeight * mh;
       if (mh >= DANGER_HEIGHT) {
         const factor = AI_WEIGHTS.survival * (1 + 0.15 * (mh - DANGER_HEIGHT));
-        s += factor * (-1.20 * mh - 0.30 * getRowTransitions(b01) - 0.45 * getColTransitions(b01) - 0.40 * hol);
+        // Heavily penalize bad states in danger mode
+        s += factor * (-2.0 * mh - 0.30 * getRowTransitions(b01) - 0.45 * getColTransitions(b01) - 1.0 * hol);
       }
       return s;
     }
@@ -990,7 +991,7 @@
         return;
       }
       updatePreview();
-      newPieceDelay = NEW_PIECE_SHOW_DELAY;
+      newPieceDelay = performance.now() + NEW_PIECE_SHOW_DELAY;
       aiPlanCached = null; aiDescentPhase = false;
     }
 
@@ -1002,7 +1003,7 @@
       createBoard();
       nextPieceType = randomPiece(); currentPiece = createPiece(nextPieceType); nextPieceType = randomPiece();
       updateDisplay(); updatePreview();
-      newPieceDelay = NEW_PIECE_SHOW_DELAY;
+      newPieceDelay = performance.now() + NEW_PIECE_SHOW_DELAY;
       updateModeUI();
       requestAnimationFrame(gameLoop);
 
@@ -1031,8 +1032,7 @@
     }
 
     function gameLoop(ts) {
-      if (newPieceDelay > 0) {
-        newPieceDelay -= 16;
+      if (ts < newPieceDelay) {
         window.renderFunctions.draw();
         requestAnimationFrame(gameLoop); return;
       }
