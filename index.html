@@ -595,13 +595,14 @@
             <input
               id="speedSlider"
               type="range"
-              min="60"
-              max="400"
-              step="10"
-              value="160"
+              min="1"
+              max="100"
+              step="1"
+              value="1"
             />
+            <div id="speedBadge">×1</div>
           </div>
-          <div class="hint-row"><span>⚡ Fast</span><span>🐢 Slow</span></div>
+          <div class="hint-row"><span>🐢 Slow (×1)</span><span>⚡ Fast (×100)</span></div>
         </div>
       </div>
     </div>
@@ -617,9 +618,12 @@
         nextPieceType = null,
         nextPieceColorKey = null;
 
-      // === Demo pacing (ms) ===
-      // Recommended typical range: 150–180 ms (slider allows 60–400 ms)
-      let DEMO_SPEED_MS = 160; // controlled by the slider
+      // === Demo pacing ===
+      // Behavior is now driven by a multiplier: 1 (slow) .. 100 (fast).
+      // Internally we convert the factor to an interval in milliseconds
+      // using a nominal base of 160 ms (≈ default when factor = 1).
+      let DEMO_SPEED_FACTOR = 1; // 1–100, controlled by slider
+      let DEMO_SPEED_MS = 160; // computed from factor
       const NEW_PIECE_SHOW_DELAY = 180; // short delay to reveal a freshly spawned piece
       const ROTATION_SPIN_LIMIT = Infinity; // unlimited rotations
       const DROP_INTERVAL_DEMO = 240; // not used in Demo; gravity applies in Player
@@ -1011,25 +1015,30 @@
         for (let r = ROWS - 1; r >= 0; r--) {
           if (board[r].every((cell) => cell !== null)) full.push(r);
         }
+        // make absolutely sure we clear from bottom up; this also protects
+        // against future changes to the scanning order
+        full.sort((a, b) => b - a);
         const tSpinType = detectTSpinOnLock(full.length);
 
         if (full.length > 0) {
           // short pulse animation for cleared rows
-          clearingLines = full;
+          clearingLines = full.slice(); // decouple from `full` array
           animationFrame = 0;
           setTimeout(() => {
-            full.forEach((i) => board.splice(i, 1));
-            for (let i = 0; i < full.length; i++) {
+            // use a fresh copy in the timeout in case `full` is mutated
+            const toClear = full.slice();
+            toClear.forEach((i) => board.splice(i, 1));
+            for (let i = 0; i < toClear.length; i++) {
               board.unshift(Array(COLS).fill(null));
             }
             const isPC = isBoardEmpty();
             applyScoring({
-              cleared: full.length,
+              cleared: toClear.length,
               tSpinType,
               perfectClear: isPC,
             });
 
-            lines += full.length;
+            lines += toClear.length;
             level = Math.min(
               MAX_LEVEL,
               Math.floor(lines / LINES_PER_LEVEL) + 1,
@@ -1198,28 +1207,48 @@
         return Math.max(min, Math.min(max, val));
       }
       function applyDemoSpeedFromStorage() {
-        const saved = parseInt(
-          localStorage.getItem("tetris_demo_speed_ms") || "160",
+        // read factor from storage; default to 1
+        let savedFact = parseInt(
+          localStorage.getItem("tetris_demo_speed_factor") || "",
           10,
         );
-        DEMO_SPEED_MS = clamp(isNaN(saved) ? 160 : saved, 60, 400);
+        if (isNaN(savedFact)) {
+          // if an old ms-based value exists, convert it
+          const oldMs = parseInt(
+            localStorage.getItem("tetris_demo_speed_ms") || "",
+            10,
+          );
+          if (!isNaN(oldMs) && oldMs > 0) {
+            savedFact = Math.round(160 / oldMs);
+          } else {
+            savedFact = 1;
+          }
+        }
+        DEMO_SPEED_FACTOR = clamp(savedFact, 1, 100);
+        DEMO_SPEED_MS = Math.max(1, Math.round(160 / DEMO_SPEED_FACTOR));
         const slider = document.getElementById("speedSlider");
         const badge = document.getElementById("speedBadge");
         if (slider) {
-          slider.value = String(DEMO_SPEED_MS);
+          slider.value = String(DEMO_SPEED_FACTOR);
         }
         if (badge) {
-          badge.textContent = `${DEMO_SPEED_MS} ms`;
+          badge.textContent = `×${DEMO_SPEED_FACTOR}`;
         }
       }
       function wireDemoSpeedSlider() {
         const slider = document.getElementById("speedSlider");
         if (!slider) return;
         slider.addEventListener("input", () => {
-          DEMO_SPEED_MS = clamp(parseInt(slider.value, 10), 60, 400);
-          localStorage.setItem("tetris_demo_speed_ms", String(DEMO_SPEED_MS));
+          DEMO_SPEED_FACTOR = clamp(parseInt(slider.value, 10), 1, 100);
+          DEMO_SPEED_MS = Math.max(1, Math.round(160 / DEMO_SPEED_FACTOR));
+          localStorage.setItem(
+            "tetris_demo_speed_factor",
+            String(DEMO_SPEED_FACTOR),
+          );
           // Apply immediately — schedule the next AI action soon
           aiNextActionTime = performance.now() + 10;
+          const badge = document.getElementById("speedBadge");
+          if (badge) badge.textContent = `×${DEMO_SPEED_FACTOR}`;
         });
       }
       // ========= /DEMO SPEED =========
