@@ -16,6 +16,25 @@
         --accent: #3182ce;
         --score: #2f855a;
         --overlay-bg: rgba(255, 255, 255, 0.95);
+        /* piece colors – can be themed via light/dark overrides */
+        --piece-I: #00e5ff;
+        --piece-O: #ffd700;
+        --piece-T: #bf40bf;
+        --piece-S: #32cd32;
+        --piece-Z: #ff4040;
+        --piece-J: #4169e1;
+        --piece-L: #ff8c00;
+        /* extra colors for a wider random palette */
+        --piece-A: #e91e63;
+        --piece-B: #9c27b0;
+        --piece-C: #673ab7;
+        --piece-D: #3f51b5;
+        --piece-E: #2196f3;
+        --piece-F: #03a9f4;
+        --piece-G: #00bcd4;
+        --piece-H: #009688;
+        --piece-I2: #8bc34a;
+        --piece-J2: #ff5722;
       }
       .dark {
         --bg: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -25,6 +44,25 @@
         --accent: #00d9ff;
         --score: #00ff88;
         --overlay-bg: rgba(15, 15, 35, 0.95);
+        /* adjust piece hues for dark background */
+        --piece-I: #33ffff;
+        --piece-O: #ffea00;
+        --piece-T: #d070d0;
+        --piece-S: #5cbf5c;
+        --piece-Z: #ff6a6a;
+        --piece-J: #5a7fff;
+        --piece-L: #ffaa33;
+        /* dark variants of extra colors */
+        --piece-A: #ff4a7c;
+        --piece-B: #bb59ff;
+        --piece-C: #957cff;
+        --piece-D: #7a92ff;
+        --piece-E: #6abaff;
+        --piece-F: #64dfff;
+        --piece-G: #4fd6d6;
+        --piece-H: #3dbfa3;
+        --piece-I2: #a4e25a;
+        --piece-J2: #ff6e40;
       }
       * {
         margin: 0;
@@ -97,44 +135,23 @@
         color: var(--score);
         text-align: center;
       }
+      /* preview-box now is a canvas element; size is 4×BLOCK_SIZE (120px)
+         grid lines and blocks are drawn directly in script */
       .preview-box {
         width: 120px;
         height: 120px;
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        grid-template-rows: repeat(4, 1fr);
-        gap: 2px;
+        display: block;
         margin: 0 auto;
         background: var(--board-bg);
         border: 2px solid var(--grid);
-        border-radius: 4px;
+        border-radius: 8px; /* match block rounding */
         transition:
           background 0.3s,
           border-color 0.3s;
-        position: relative;
       }
-      .preview-cell {
-        background: transparent;
-        border-radius: 2px;
-      }
-      .preview-cell.filled {
-        box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.3);
-      }
-      /* Grid lines for preview cells */
-      .preview-box::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-image:
-          linear-gradient(to right, var(--grid) 1px, transparent 1px),
-          linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
-        background-size: calc(100% / 4) calc(100% / 4);
-        pointer-events: none;
-        opacity: 0.3;
-      }
+      /* previous div-based preview cells removed; rendering now happens on the
+         preview canvas. the following rules remain just for background/border. */
+      /* the grid lines will be drawn via canvas, so no pseudo-element needed */
       .controls-info {
         font-size: 11px;
         line-height: 1.8;
@@ -152,7 +169,7 @@
       #gameCanvas {
         background: var(--board-bg);
         border: 2px solid var(--grid);
-        border-radius: 4px;
+        border-radius: 8px;
         display: block;
         width: 300px;
         height: 600px;
@@ -543,7 +560,7 @@
       <div class="side-panel right-panel">
         <div class="panel">
           <div class="panel-title">Next</div>
-          <div class="preview-box" id="previewBox"></div>
+          <canvas class="preview-box" id="previewCanvas" width="120" height="120"></canvas>
         </div>
         <div class="panel">
           <div class="panel-title">Theme</div>
@@ -593,6 +610,12 @@
       const COLS = 10,
         ROWS = 20,
         BLOCK_SIZE = 30;
+
+      // store upcoming color along with type
+      let board = [];
+      let currentPiece = null,
+        nextPieceType = null,
+        nextPieceColorKey = null;
 
       // === Demo pacing (ms) ===
       // Recommended typical range: 150–180 ms (slider allows 60–400 ms)
@@ -739,9 +762,7 @@
       // Base line scores (applied when it's NOT a T-Spin line clear)
       const SCORE_TABLE = [0, 100, 300, 500, 800];
 
-      let board = [];
-      let currentPiece = null,
-        nextPieceType = null;
+      // (moved above when defining COLS/ROWS)
       let score = 0,
         level = 1,
         lines = 0;
@@ -781,12 +802,42 @@
       }
 
       // Spawn is identical in both modes: top row, horizontally centered (y=0)
-      function createPiece(type) {
+      // ==== color-palette helpers ==== 
+      // pick a random key from the set of piece‑color variables; storing a key
+      // allows us to recompute the actual color on every render (so theme
+      // switches propagate) while still giving each piece its own hue.
+      function getPaletteKeys() {
+        const styles = getComputedStyle(document.body);
+        const keys = [];
+        for (let i = 0; i < styles.length; i++) {
+          const prop = styles[i];
+          if (prop.startsWith("--piece-")) {
+            keys.push(prop.slice("--piece-".length));
+          }
+        }
+        return keys;
+      }
+      function chooseRandomColorKey() {
+        const keys = getPaletteKeys();
+        if (keys.length === 0) return "I";
+        return keys[Math.floor(Math.random() * keys.length)];
+      }
+      function getPaletteColor(key) {
+        if (!key) return "#000";
+        const csscol = getComputedStyle(document.body).getPropertyValue(`--piece-${key}`);
+        if (csscol) {
+          const t = csscol.trim();
+          if (t) return t;
+        }
+        return PIECES[key] && PIECES[key].color ? PIECES[key].color : "#000";
+      }
+
+      function createPiece(type, colorKey = null) {
         const p = PIECES[type];
         return {
           type,
           shape: p.shape.map((r) => r.slice()),
-          color: p.color,
+          colorKey: colorKey || chooseRandomColorKey(),
           x: Math.floor((COLS - p.shape[0].length) / 2),
           y: 0,
           rotation: 0,
@@ -939,7 +990,9 @@
             const yy = currentPiece.y + y,
               xx = currentPiece.x + x;
             if (yy < 0) topped = true;
-            if (yy >= 0) board[yy][xx] = currentPiece.color;
+            if (yy >= 0)
+              // store an object to preserve type and palette key for color
+              board[yy][xx] = { type: currentPiece.type, colorKey: currentPiece.colorKey };
           }),
         );
 
@@ -1009,8 +1062,10 @@
         newPieceDelay = 0;
         prevClearedLinesForPC = 0;
         nextPieceType = randomPiece();
-        currentPiece = createPiece(nextPieceType);
+        nextPieceColorKey = chooseRandomColorKey();
+        currentPiece = createPiece(nextPieceType, nextPieceColorKey);
         nextPieceType = randomPiece();
+        nextPieceColorKey = chooseRandomColorKey();
         document.getElementById("gameOverOverlay").classList.remove("visible");
         document.getElementById("pauseOverlay").classList.remove("visible");
         updateDisplay();
@@ -1062,36 +1117,35 @@
       }
 
       function updatePreview() {
-        const box = document.getElementById("previewBox");
-        box.style.background = getBoardBg();
-        box.innerHTML = "";
-        for (let i = 0; i < 16; i++) {
-          const cell = document.createElement("div");
-          cell.className = "preview-cell";
-          box.appendChild(cell);
-        }
+        if (!nextPieceType) return; // nothing to draw yet
+        const canvas = document.getElementById("previewCanvas");
+        // ensure canvas dimensions reflect BLOCK_SIZE
+        canvas.width = BLOCK_SIZE * 4;
+        canvas.height = BLOCK_SIZE * 4;
+        canvas.style.width = `${BLOCK_SIZE * 4}px`;
+        canvas.style.height = `${BLOCK_SIZE * 4}px`;
+        const ctx2 = canvas.getContext("2d");
 
-        const nextType = nextPieceType,
-          piece = PIECES[nextType];
-        const trimmed = trimShape(piece.shape);
+        // fill background
+        ctx2.fillStyle = getBoardBg();
+        ctx2.fillRect(0, 0, canvas.width, canvas.height);
+
+        // draw grid lines like the main board
+        drawPreviewGrid(ctx2);
+
+        const nextType = nextPieceType;
+        const trimmed = trimShape(PIECES[nextType].shape);
         const h = trimmed.length,
           w = trimmed[0].length;
 
         const offX = Math.floor((4 - w) / 2);
         const offY = Math.floor((4 - h) / 2);
+        const col = getPaletteColor(nextPieceColorKey) || getPieceColor(nextType);
 
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
             if (!trimmed[y][x]) continue;
-            const col = piece.color;
-            const px = offX + x;
-            const py = offY + y;
-            const idx = py * 4 + px;
-            if (idx >= 0 && idx < 16) {
-              const cell = box.children[idx];
-              cell.classList.add("filled");
-              cell.style.background = col;
-            }
+            drawBlock(ctx2, offX + x, offY + y, col, false);
           }
         }
       }
@@ -1103,24 +1157,26 @@
         const isDark = saved === "dark";
         document.body.classList.toggle("dark", isDark);
         updateThemeUI();
-        const pb = document.getElementById("previewBox");
-        if (pb)
-          pb.style.background =
-            getComputedStyle(document.body)
-              .getPropertyValue("--board-bg")
-              .trim() || "#fafafa";
+        const pb = document.getElementById("previewCanvas");
+        if (pb) {
+          const ctx2 = pb.getContext("2d");
+          ctx2.fillStyle = getBoardBg();
+          ctx2.fillRect(0, 0, pb.width, pb.height);
+        }
+        updatePreview();
       }
       function toggleTheme() {
         const nowDark = !document.body.classList.contains("dark");
         document.body.classList.toggle("dark", nowDark);
         localStorage.setItem("tetris_theme", nowDark ? "dark" : "light");
         updateThemeUI();
-        const pb = document.getElementById("previewBox");
-        if (pb)
-          pb.style.background =
-            getComputedStyle(document.body)
-              .getPropertyValue("--board-bg")
-              .trim() || "#fafafa";
+        const pb = document.getElementById("previewCanvas");
+        if (pb) {
+          const ctx2 = pb.getContext("2d");
+          ctx2.fillStyle = getBoardBg();
+          ctx2.fillRect(0, 0, pb.width, pb.height);
+        }
+        updatePreview();
       }
       function updateThemeUI() {
         const lightBtn = document.getElementById("lightBtn");
@@ -1183,6 +1239,8 @@
         getBoard: () => board,
         getCurrentPiece: () => currentPiece,
         getNextPieceType: () => nextPieceType,
+        getNextPieceColorKey: () => nextPieceColorKey,
+        getPaletteColor,
         getScore: () => score,
         getLevel: () => level,
         getLines: () => lines,
@@ -1240,23 +1298,101 @@
             .trim() || "#fafafa"
         );
       }
+      // piece color is stored as CSS variable --piece-<type>; fallback to
+      // initial PIECES definition if the variable is missing.  This allows
+      // theme switches to recolor both the board and preview seamlessly.
+      function getPieceColor(type) {
+        const csscol = getComputedStyle(document.body)
+          .getPropertyValue(`--piece-${type}`);
+        if (csscol) {
+          const t = csscol.trim();
+          if (t) return t;
+        }
+        return PIECES[type] && PIECES[type].color ? PIECES[type].color : "#000";
+      }
+      
+      // helper to draw grid lines on a 4×4 preview canvas
+      function drawPreviewGrid(ctx) {
+        ctx.strokeStyle = getGridColor();
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 4; i++) {
+          const pos = i * BLOCK_SIZE;
+          ctx.beginPath();
+          ctx.moveTo(pos, 0);
+          ctx.lineTo(pos, 4 * BLOCK_SIZE);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, pos);
+          ctx.lineTo(4 * BLOCK_SIZE, pos);
+          ctx.stroke();
+        }
+      }
 
-      function drawBlock(vx, vy, color, ghost = false) {
+      // drawBlock now accepts an optional context parameter so it can be reused
+      // for both the main game canvas and the preview canvas.
+      // simple color shading helper (percent may be negative to darken)
+      function shadeColor(color, percent) {
+        // expect #rrggbb
+        const num = parseInt(color.slice(1), 16);
+        const r = (num >> 16) & 0xff;
+        const g = (num >> 8) & 0xff;
+        const b = num & 0xff;
+        const t = percent < 0 ? 0 : 255;
+        const p = Math.abs(percent) / 100;
+        const R = Math.round((t - r) * p + r);
+        const G = Math.round((t - g) * p + g);
+        const B = Math.round((t - b) * p + b);
+        return `#${((1 << 24) + (R << 16) + (G << 8) + B)
+          .toString(16)
+          .slice(1)}`;
+      }
+
+      function drawBlock(ctxArg, vx, vy, color, ghost = false) {
+        const ctxToUse = ctxArg || ctx;
         const px = vx * BLOCK_SIZE,
           py = vy * BLOCK_SIZE;
-        ctx.fillStyle = color;
-        const old = ctx.globalAlpha;
-        ctx.globalAlpha = ghost ? 0.2 : 1;
-        ctx.fillRect(px + 1, py + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
-        ctx.globalAlpha = old;
-        if (!ghost) {
-          ctx.fillStyle = "rgba(255,255,255,.3)";
-          ctx.fillRect(px + 1, py + 1, BLOCK_SIZE - 2, 4);
-          ctx.fillRect(px + 1, py + 1, 4, BLOCK_SIZE - 2);
-          ctx.fillStyle = "rgba(0,0,0,.3)";
-          ctx.fillRect(px + BLOCK_SIZE - 5, py + 1, 4, BLOCK_SIZE - 2);
-          ctx.fillRect(px + 1, py + BLOCK_SIZE - 5, BLOCK_SIZE - 2, 4);
-        }
+        const radius = 6;
+        const w = BLOCK_SIZE - 2,
+          h = BLOCK_SIZE - 2;
+        const ox = px + 1,
+          oy = py + 1;
+
+        const oldAlpha = ctxToUse.globalAlpha;
+        ctxToUse.globalAlpha = ghost ? 0.2 : 1;
+        // drop shadow for modern “floating” feel
+        ctxToUse.save();
+        ctxToUse.shadowColor = "rgba(0,0,0,0.25)";
+        ctxToUse.shadowBlur = 6;
+        ctxToUse.shadowOffsetX = 2;
+        ctxToUse.shadowOffsetY = 2;
+
+        // gradient fill for subtle lighting
+        const grad = ctxToUse.createLinearGradient(ox, oy, ox + w, oy + h);
+        grad.addColorStop(0, shadeColor(color, 20));
+        grad.addColorStop(1, shadeColor(color, -10));
+        ctxToUse.fillStyle = grad;
+
+        // rounded rect
+        ctxToUse.beginPath();
+        ctxToUse.moveTo(ox + radius, oy);
+        ctxToUse.lineTo(ox + w - radius, oy);
+        ctxToUse.quadraticCurveTo(ox + w, oy, ox + w, oy + radius);
+        ctxToUse.lineTo(ox + w, oy + h - radius);
+        ctxToUse.quadraticCurveTo(ox + w, oy + h, ox + w - radius, oy + h);
+        ctxToUse.lineTo(ox + radius, oy + h);
+        ctxToUse.quadraticCurveTo(ox, oy + h, ox, oy + h - radius);
+        ctxToUse.lineTo(ox, oy + radius);
+        ctxToUse.quadraticCurveTo(ox, oy, ox + radius, oy);
+        ctxToUse.closePath();
+        ctxToUse.fill();
+        ctxToUse.restore();
+
+        // border
+        ctxToUse.strokeStyle = getGridColor();
+        ctxToUse.lineWidth = 1;
+        ctxToUse.stroke();
+
+        ctxToUse.globalAlpha = oldAlpha;
       }
 
       function drawBoard() {
@@ -1281,7 +1417,8 @@
         }
         for (let r = 0; r < ROWS; r++)
           for (let c = 0; c < COLS; c++) {
-            if (!board[r][c]) continue;
+            const cell = board[r][c];
+            if (!cell) continue;
             if (clearing.includes(r)) {
               ctx.fillStyle =
                 "rgba(255,255,255," + (0.5 + Math.sin(anim * 0.3) * 0.5) + ")";
@@ -1291,7 +1428,10 @@
                 BLOCK_SIZE - 2,
                 BLOCK_SIZE - 2,
               );
-            } else drawBlock(c, r, board[r][c], false);
+            } else {
+              const col = cell.colorKey ? getPaletteColor(cell.colorKey) : getPieceColor(cell.type || cell);
+              drawBlock(ctx, c, r, col, false);
+            }
           }
       }
 
@@ -1304,17 +1444,18 @@
         cp.shape.forEach((row, y) =>
           row.forEach((v, x) => {
             if (!v) return;
-            drawBlock(cp.x + x, gy + y, getGhostColor(), true);
+            drawBlock(ctx, cp.x + x, gy + y, getGhostColor(), true);
           }),
         );
       }
       function drawPiece() {
         const cp = window.gameFunctions.getCurrentPiece();
         if (!cp) return;
+        const col = cp.colorKey ? getPaletteColor(cp.colorKey) : getPieceColor(cp.type);
         cp.shape.forEach((row, y) =>
           row.forEach((v, x) => {
             if (!v) return;
-            drawBlock(cp.x + x, cp.y + y, cp.color, false);
+            drawBlock(ctx, cp.x + x, cp.y + y, col, false);
           }),
         );
       }
@@ -1773,6 +1914,33 @@
         if (!window.gameFunctions.hasCollision(cp.x, cp.y + 1, cp.shape)) {
           window.gameFunctions.movePiece(0, 1);
         } else {
+          // Demo mode last-second lateral adjustment to reduce holes
+          if (demoMode) {
+            // compute hole count after placing piece at given offset
+            const base01 = clone01(window.gameFunctions.getBoard());
+            const holesAt = (dx) => {
+              if (window.gameFunctions.hasCollision(cp.x + dx, cp.y, cp.shape))
+                return Infinity;
+              const { board: after } = placePiece01WithClears(
+                clone01(window.gameFunctions.getBoard()),
+                cp.x + dx,
+                cp.y,
+                cp.shape,
+              );
+              return getHoles(after);
+            };
+            const holesCurr = holesAt(0);
+            const holesLeft = holesAt(-1);
+            const holesRight = holesAt(1);
+            if (holesLeft < holesCurr) {
+              window.gameFunctions.movePiece(-1, 0);
+              return; // defer locking this frame
+            }
+            if (holesRight < holesCurr) {
+              window.gameFunctions.movePiece(1, 0);
+              return;
+            }
+          }
           window.gameFunctions.lockPiece();
           aiPlanCached = null;
           aiDescentPhase = false;
@@ -1780,8 +1948,9 @@
       }
 
       function spawnPiece() {
-        currentPiece = createPiece(nextPieceType);
+        currentPiece = createPiece(nextPieceType, nextPieceColorKey);
         nextPieceType = randomPiece();
+        nextPieceColorKey = chooseRandomColorKey();
 
         if (hasCollision(currentPiece.x, currentPiece.y, currentPiece.shape)) {
           gameOver = true;
@@ -1803,8 +1972,10 @@
 
         createBoard();
         nextPieceType = randomPiece();
-        currentPiece = createPiece(nextPieceType);
+        nextPieceColorKey = chooseRandomColorKey();
+        currentPiece = createPiece(nextPieceType, nextPieceColorKey);
         nextPieceType = randomPiece();
+        nextPieceColorKey = chooseRandomColorKey();
         updateDisplay();
         updatePreview();
         newPieceDelay = performance.now() + NEW_PIECE_SHOW_DELAY;
@@ -1826,23 +1997,25 @@
           document.body.classList.remove("dark");
           localStorage.setItem("tetris_theme", "light");
           updateThemeUI();
-          const pb = document.getElementById("previewBox");
-          if (pb)
-            pb.style.background =
-              getComputedStyle(document.body)
-                .getPropertyValue("--board-bg")
-                .trim() || "#fafafa";
+          const pb = document.getElementById("previewCanvas");
+          if (pb) {
+            const ctx2 = pb.getContext("2d");
+            ctx2.fillStyle = getBoardBg();
+            ctx2.fillRect(0, 0, pb.width, pb.height);
+          }
+          updatePreview();
         });
         document.getElementById("darkBtn").addEventListener("click", () => {
           document.body.classList.add("dark");
           localStorage.setItem("tetris_theme", "dark");
           updateThemeUI();
-          const pb = document.getElementById("previewBox");
-          if (pb)
-            pb.style.background =
-              getComputedStyle(document.body)
-                .getPropertyValue("--board-bg")
-                .trim() || "#fafafa";
+          const pb = document.getElementById("previewCanvas");
+          if (pb) {
+            const ctx2 = pb.getContext("2d");
+            ctx2.fillStyle = getBoardBg();
+            ctx2.fillRect(0, 0, pb.width, pb.height);
+          }
+          updatePreview();
         });
         wireDemoSpeedSlider();
       }
