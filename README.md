@@ -10,8 +10,6 @@ The game is available online at: [https://nizovtsevam.github.io/TetrisAI/](https
 ### Option 2: Locally
 To start the game locally, open the `index.html` file in any modern browser:
 
-- **Direct link**: [index.html](index.html)
-
 You can also:
 - Double-click the `index.html` file in your file explorer
 - Drag the file into your browser window
